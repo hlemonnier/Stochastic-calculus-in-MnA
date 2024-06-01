@@ -3,10 +3,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import os
 import wrds
-from openpyxl import load_workbook
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.metrics import mean_absolute_error, r2_score, mean_squared_error
+from scipy.stats import wilcoxon
+
 # Define the Excel file names
 excel_file = 'm_and_a_data.xlsx'
 treasury_file = '1-Year Treasury Bill Rate.xls'
@@ -138,7 +139,6 @@ def retrieve_and_save_data(sample_percentage=100):
     ma_data['dateann'] = pd.to_datetime(ma_data['dateann'])
     ma_data['fyear'] = ma_data['dateann'].dt.year
 
-
     # Ensure gvkey is of type string in final_data
     final_data['gvkey'] = final_data['gvkey'].astype(str)
 
@@ -161,7 +161,6 @@ if os.path.exists(excel_file):
     final_data_with_ma = pd.read_excel(excel_file, sheet_name='Final Data')
 else:
     final_data_with_ma = retrieve_and_save_data(sample_percentage=100)
-
 
 # Aggregate data by `gvkey` and `fyear`
 aggregated_data = final_data_with_ma.groupby(['gvkey', 'fyear']).agg({
@@ -372,7 +371,8 @@ def monte_carlo_valuation_stock(data, target_gvkey, num_simulations=10000, T=5):
     for i in range(num_simulations):
         prices = [initial_price]
         for t in range(1, T):
-            price_t = prices[-1] * np.exp((mu - 0.5 * avg_volatility ** 2) * dt + avg_volatility * np.sqrt(dt) * np.random.randn())
+            price_t = prices[-1] * np.exp(
+                (mu - 0.5 * avg_volatility ** 2) * dt + avg_volatility * np.sqrt(dt) * np.random.randn())
             prices.append(price_t)
         sim_prices[i, :] = prices
         sim_valuations[i] = prices[-1] * outstanding_shares  # Market capitalization as valuation
@@ -402,7 +402,6 @@ def monte_carlo_valuation_stock(data, target_gvkey, num_simulations=10000, T=5):
 
     mean_valuation = np.mean(sim_valuations)
     std_valuation = np.std(sim_valuations)
-    print(f"Mean Valuation for GVKEY {target_gvkey}: ${mean_valuation:.2f}")
     print(f"Standard Deviation of Valuation for GVKEY {target_gvkey}: ${std_valuation:.2f}")
 
     return sim_valuations, sim_prices, sim_data_df
@@ -416,9 +415,7 @@ def analyze_simulation_results(sim_valuations, sim_prices, sim_data_df, num_simu
     percentile_5 = np.percentile(sim_valuations, 5)
     percentile_95 = np.percentile(sim_valuations, 95)
 
-    print(f"Mean Valuation: ${mean_valuation:.2f}")
     print(f"Median Valuation: ${median_valuation:.2f}")
-    print(f"Standard Deviation of Valuation: ${std_valuation:.2f}")
     print(f"5th Percentile Valuation: ${percentile_5:.2f}")
     print(f"95th Percentile Valuation: ${percentile_95:.2f}")
 
@@ -429,8 +426,8 @@ def analyze_simulation_results(sim_valuations, sim_prices, sim_data_df, num_simu
     highest_valuation_scenario = sim_prices[highest_valuation_idx]
     lowest_valuation_scenario = sim_prices[lowest_valuation_idx]
 
-    print(f"Highest Valuation Scenario: {highest_valuation_scenario}")
-    print(f"Lowest Valuation Scenario: {lowest_valuation_scenario}")
+    #print(f"Highest Valuation Scenario: {highest_valuation_scenario}")
+    #print(f"Lowest Valuation Scenario: {lowest_valuation_scenario}")
 
     return {
         "mean_valuation": mean_valuation,
@@ -452,16 +449,20 @@ def formulate_recommendations(analysis_results):
     recommendations = []
 
     # Strategic Recommendation 1: Hedging Strategies
-    recommendations.append("Implement hedging strategies to mitigate the risk of unfavorable market movements, especially given the 5th percentile valuation.")
+    recommendations.append(
+        "Implement hedging strategies to mitigate the risk of unfavorable market movements, especially given the 5th percentile valuation.")
 
     # Strategic Recommendation 2: Adjustments to Capital Structure
-    recommendations.append("Consider adjustments to the capital structure to optimize the cost of capital, leveraging the mean and median valuation insights.")
+    recommendations.append(
+        "Consider adjustments to the capital structure to optimize the cost of capital, leveraging the mean and median valuation insights.")
 
     # Strategic Recommendation 3: Dynamic Pricing Approaches
-    recommendations.append("Adopt dynamic pricing approaches for acquisitions to take advantage of market conditions, informed by the distribution of valuations.")
+    recommendations.append(
+        "Adopt dynamic pricing approaches for acquisitions to take advantage of market conditions, informed by the distribution of valuations.")
 
     # Strategic Recommendation 4: Risk Management
-    recommendations.append("Develop a robust risk management framework that considers the volatility and uncertainty highlighted in the 5th and 95th percentile valuations.")
+    recommendations.append(
+        "Develop a robust risk management framework that considers the volatility and uncertainty highlighted in the 5th and 95th percentile valuations.")
 
     print("\nStrategic Recommendations:")
     for rec in recommendations:
@@ -470,10 +471,21 @@ def formulate_recommendations(analysis_results):
     return recommendations
 
 
-def machine_learning_analysis(sim_data_df):
+def machine_learning_stock_price_prediction_distribution(data, target_gvkey, num_simulations=10000, T=5):
     # Prepare data for machine learning
-    X = sim_data_df[['Volatility', 'InterestRate', 'FinalPrice']]
-    y = sim_data_df['Valuation']
+    target_company_data = data[data['gvkey'] == target_gvkey]
+
+    if target_company_data.empty:
+        print(f"No data available for GVKEY: {target_gvkey}")
+        return None, None
+
+    # Use historical stock prices to create features and target
+    historical_data = target_company_data[['fyear', 'average_price', 'volatility', 'average_interest_rate']].copy()
+    historical_data['price_lag1'] = historical_data['average_price'].shift(1)
+    historical_data = historical_data.dropna()
+
+    X = historical_data[['price_lag1', 'volatility', 'average_interest_rate']]
+    y = historical_data['average_price']
 
     # Split the data into training and testing sets
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -491,48 +503,120 @@ def machine_learning_analysis(sim_data_df):
     print(f"Mean Absolute Error: {mae:.2f}")
     print(f"R-squared: {r2:.2f}")
 
-    # Feature importance
-    feature_importances = model.feature_importances_
-    feature_names = X.columns
-    feature_importance_df = pd.DataFrame({'Feature': feature_names, 'Importance': feature_importances})
-    feature_importance_df = feature_importance_df.sort_values(by='Importance', ascending=False)
-    print("\nFeature Importances:")
-    print(feature_importance_df)
+    # Generate future stock prices and valuations using the model with added randomness
+    future_prices = []
+    for _ in range(num_simulations):
+        prices = [historical_data['average_price'].values[-1]]
+        for _ in range(T):
+            last_price = prices[-1]
+            future_volatility = historical_data['volatility'].values[-1]
+            future_interest_rate = historical_data['average_interest_rate'].values[-1]
+            prediction = model.predict(pd.DataFrame([[last_price, future_volatility, future_interest_rate]], columns=['price_lag1', 'volatility', 'average_interest_rate']))[0]
+            random_noise = np.random.normal(0, future_volatility)
+            next_price = prediction + random_noise
+            prices.append(next_price)
+        future_prices.append(prices[-1])
 
-    # Plot feature importances
-    plt.figure(figsize=(10, 6))
-    plt.barh(feature_importance_df['Feature'], feature_importance_df['Importance'])
-    plt.xlabel('Importance')
-    plt.ylabel('Feature')
-    plt.title('Feature Importances from Random Forest Regressor')
+    future_prices = np.array(future_prices)
+    return model, future_prices
+
+
+def compare_simulation_and_ml(sim_valuations, future_prices, outstanding_shares):
+    ml_valuations = future_prices * outstanding_shares
+
+    # Plot comparison
+    visualize_comparison(sim_valuations, np.mean(ml_valuations), ml_valuations)
+
+    return ml_valuations
+
+
+def calculate_performance_metrics(mc_valuations, ml_valuations):
+    mc_mean = np.mean(mc_valuations)
+    ml_mean = np.mean(ml_valuations)
+    mc_mae = np.mean(np.abs(mc_valuations - mc_mean))
+    ml_mae = np.mean(np.abs(ml_valuations - ml_mean))
+    mc_mse = mean_squared_error(mc_valuations, np.full_like(mc_valuations, mc_mean))
+    ml_mse = mean_squared_error(ml_valuations, np.full_like(ml_valuations, ml_mean))
+
+    print(f"Monte Carlo Mean Valuation: ${mc_mean:.2f}, MAE: {mc_mae:.2f}, MSE: {mc_mse:.2f}")
+    print(f"ML Predicted Mean Valuation: ${ml_mean:.2f}, MAE: {ml_mae:.2f}, MSE: {ml_mse:.2f}")
+
+    return mc_mae, ml_mae, mc_mse, ml_mse
+
+
+def visualize_comparison(mc_valuations, ml_valuation, ml_valuations):
+    fig, axs = plt.subplots(2, 1, figsize=(14, 12))
+
+    # Plot Monte Carlo Valuations on the first subplot
+    axs[0].hist(mc_valuations, bins=50, alpha=0.6, label='Monte Carlo Valuations', color='blue', edgecolor='black')
+    axs[0].set_title('Monte Carlo Valuations')
+    axs[0].set_ylabel('Frequency (MC)')
+    axs[0].legend()
+    axs[0].grid(True)
+
+    # Plot ML Valuations on the second subplot
+    axs[1].hist(ml_valuations, bins=50, alpha=0.4, label='ML Valuations', color='orange', edgecolor='black')
+    axs[1].axvline(ml_valuation, color='r', linestyle='--', linewidth=2, label='ML Predicted Valuation')
+    axs[1].set_xlim([np.min(ml_valuations) - 1000, np.max(ml_valuations) + 1000])  # Zoom in on ML valuations
+    axs[1].set_title('ML Valuations (Zoomed In)')
+    axs[1].set_xlabel('Valuation')
+    axs[1].set_ylabel('Frequency (ML)')
+    axs[1].legend()
+    axs[1].grid(True)
+
+    plt.suptitle('Comparison of Monte Carlo and Machine Learning Valuations')
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
     plt.show()
 
-    return model, feature_importance_df
+
+def statistical_analysis(mc_valuations, ml_valuations):
+    # Use the Wilcoxon signed-rank test instead of the t-test
+    try:
+        stat, p_value = wilcoxon(mc_valuations, ml_valuations)
+        print(f"Wilcoxon signed-rank test statistic: {stat:.2f}, P-value: {p_value:.4f}")
+        if p_value < 0.05:
+            print("The difference between Monte Carlo and ML valuations is statistically significant.")
+        else:
+            print("The difference between Monte Carlo and ML valuations is not statistically significant.")
+    except ValueError as e:
+        print(f"Error in statistical test: {e}")
 
 
-# Plot stock prices around M&A events for Activision Blizzard (gvkey 180405)
-plot_stock_prices_around_ma(final_data_with_ma, target_gvkey=180405)
+def main_workflow():
+    # Plot stock prices around M&A events for Activision Blizzard (gvkey 180405)
+    plot_stock_prices_around_ma(final_data_with_ma, target_gvkey=180405)
 
-# Generate and plot Brownian Motion paths for Activision Blizzard
-generate_brownian_motion(aggregated_data, target_gvkey=180405)
+    # Generate and plot Brownian Motion paths for Activision Blizzard
+    generate_brownian_motion(aggregated_data, target_gvkey=180405)
 
-# Plot real vs simulated prices (including GBM) for Activision Blizzard
-plot_real_vs_simulated_prices(aggregated_data, target_gvkey=180405)
+    # Plot real vs simulated prices (including GBM) for Activision Blizzard
+    plot_real_vs_simulated_prices(aggregated_data, target_gvkey=180405)
 
-# Calculate volatility impact for Activision Blizzard (gvkey 180405)
-calculate_volatility_impact(final_data_with_ma, target_gvkey=180405)
+    # Calculate volatility impact for Activision Blizzard (gvkey 180405)
+    calculate_volatility_impact(final_data_with_ma, target_gvkey=180405)
 
-# Calculate risk and return for Activision Blizzard (gvkey 180405)
-calculate_risk_return(final_data_with_ma, target_gvkey='180405')
+    # Calculate risk and return for Activision Blizzard (gvkey 180405)
+    calculate_risk_return(final_data_with_ma, target_gvkey='180405')
 
-# Run Monte Carlo valuation
-sim_valuations, sim_prices, sim_data_df = monte_carlo_valuation_stock(aggregated_data, target_gvkey=180405)
+    # Run Monte Carlo valuation
+    sim_valuations, sim_prices, sim_data_df = monte_carlo_valuation_stock(aggregated_data, target_gvkey=180405)
 
-# Analyze the simulation results
-analysis_results = analyze_simulation_results(sim_valuations, sim_prices, sim_data_df)
+    # Analyze the simulation results
+    analysis_results = analyze_simulation_results(sim_valuations, sim_prices, sim_data_df)
 
-# Formulate recommendations based on the analysis
-recommendations = formulate_recommendations(analysis_results)
+    # Formulate recommendations based on the analysis
+    formulate_recommendations(analysis_results)
 
-# Perform machine learning analysis
-model, feature_importance_df = machine_learning_analysis(analysis_results["sim_data_df"])
+    # Perform machine learning stock price prediction
+    model, future_prices = machine_learning_stock_price_prediction_distribution(aggregated_data, target_gvkey=180405)
+    if model is not None and future_prices is not None:
+        outstanding_shares = aggregated_data[aggregated_data['gvkey'] == 180405]['csho'].values[-1]
+        ml_valuations = compare_simulation_and_ml(sim_valuations, future_prices, outstanding_shares)
+
+        # Calculate performance metrics
+        mc_mae, ml_mae, mc_mse, ml_mse = calculate_performance_metrics(sim_valuations, ml_valuations)
+
+        # Perform statistical analysis
+        statistical_analysis(sim_valuations, ml_valuations)
+
+main_workflow()
